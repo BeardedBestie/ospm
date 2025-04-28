@@ -13,6 +13,7 @@ function App() {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [sessionError, setSessionError] = useState<string | null>(null);
 
   useEffect(() => {
     // Theme setup
@@ -23,44 +24,84 @@ function App() {
     }
 
     // Initial session check
-    supabase.auth.getSession().then(({ data: { session }}) => {
-      if (session?.user) {
-        setUser(session.user);
-        // Get user profile
-        supabase
-          .from('user_profiles')
-          .select('role, status')
-          .eq('id', session.user.id)
-          .single()
-          .then(({ data: profile }) => {
-            if (profile) {
-              setUserProfile(profile);
-            }
-            setLoading(false);
-          });
-      } else {
+    const initializeSession = async () => {
+      try {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError) {
+          throw sessionError;
+        }
+
+        if (session?.user) {
+          setUser(session.user);
+          
+          // Get user profile
+          const { data: profile, error: profileError } = await supabase
+            .from('user_profiles')
+            .select('role, status')
+            .eq('id', session.user.id)
+            .maybeSingle();
+
+          if (profileError) {
+            throw profileError;
+          }
+
+          if (profile) {
+            setUserProfile(profile);
+          }
+        } else {
+          setUser(null);
+          setUserProfile(null);
+        }
+      } catch (error) {
+        console.error('Session initialization error:', error);
+        setSessionError(error instanceof Error ? error.message : 'Failed to initialize session');
+        // Handle error gracefully - sign out user if session is invalid
+        await supabase.auth.signOut();
         setUser(null);
         setUserProfile(null);
+      } finally {
         setLoading(false);
       }
-    });
+    };
+
+    initializeSession();
 
     // Auth state change listener
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session?.user) {
-        setUser(session.user);
-        // Get user profile
-        supabase
-          .from('user_profiles')
-          .select('role, status')
-          .eq('id', session.user.id)
-          .single()
-          .then(({ data: profile }) => {
-            if (profile) {
-              setUserProfile(profile);
-            }
-          });
-      } else {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setUserProfile(null);
+        return;
+      }
+
+      try {
+        if (session?.user) {
+          setUser(session.user);
+          
+          // Get user profile
+          const { data: profile, error: profileError } = await supabase
+            .from('user_profiles')
+            .select('role, status')
+            .eq('id', session.user.id)
+            .maybeSingle();
+
+          if (profileError) {
+            throw profileError;
+          }
+
+          if (profile) {
+            setUserProfile(profile);
+          }
+        } else {
+          setUser(null);
+          setUserProfile(null);
+        }
+      } catch (error) {
+        console.error('Auth state change error:', error);
+        setSessionError(error instanceof Error ? error.message : 'Failed to update session');
+        // Handle error gracefully
+        await supabase.auth.signOut();
         setUser(null);
         setUserProfile(null);
       }
@@ -79,10 +120,14 @@ function App() {
   };
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setUserProfile(null);
-    window.location.reload();
+    try {
+      await supabase.auth.signOut();
+      setUser(null);
+      setUserProfile(null);
+    } catch (error) {
+      console.error('Sign out error:', error);
+      setSessionError(error instanceof Error ? error.message : 'Failed to sign out');
+    }
   };
 
   if (loading) {
@@ -93,42 +138,17 @@ function App() {
     );
   }
 
-  if (userProfile?.status === 'pending') {
+  if (sessionError) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold mb-4">Account Pending Approval</h1>
-          <p className="text-gray-600 dark:text-gray-400 mb-4">
-            Your account is pending administrator approval.
-            <br />
-            Please check back later.
-          </p>
+        <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg max-w-md w-full">
+          <h2 className="text-xl font-semibold text-red-600 dark:text-red-400 mb-4">Session Error</h2>
+          <p className="text-gray-600 dark:text-gray-300 mb-4">{sessionError}</p>
           <button
-            onClick={handleSignOut}
-            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
+            onClick={() => window.location.reload()}
+            className="w-full px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
           >
-            Sign Out
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (userProfile?.status === 'disabled') {
-    return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold mb-4">Account Disabled</h1>
-          <p className="text-gray-600 dark:text-gray-400 mb-4">
-            Your account has been disabled.
-            <br />
-            Please contact an administrator for assistance.
-          </p>
-          <button
-            onClick={handleSignOut}
-            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
-          >
-            Sign Out
+            Retry
           </button>
         </div>
       </div>

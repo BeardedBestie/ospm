@@ -4,9 +4,9 @@ import { supabase } from '../lib/supabase';
 import ProjectCard from './projects/ProjectCard';
 import CreateProjectModal from './projects/CreateProjectModal';
 import EditProjectModal from './projects/EditProjectModal';
-import ArchiveProjectModal from './projects/ArchiveProjectModal';
 import TaskList from './tasks/TaskList';
 import CommentList from './comments/CommentList';
+import { useStore } from '../lib/store';
 
 interface Project {
   id: string;
@@ -14,27 +14,32 @@ interface Project {
   description: string;
   deadline: string | null;
   created_at: string;
-  archived: boolean;
   taskCount?: number;
   memberCount?: number;
 }
 
 export default function Dashboard() {
+  const { user } = useStore();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [projectToEdit, setProjectToEdit] = useState<Project | null>(null);
-  const [projectToArchive, setProjectToArchive] = useState<Project | null>(null);
 
   const fetchProjects = async () => {
+    if (!user?.id) {
+      setProjects([]);
+      setLoading(false);
+      return;
+    }
+
     try {
       // Get user's project memberships first
       const { data: memberships, error: membershipError } = await supabase
         .from('project_members')
         .select('project_id')
-        .eq('user_id', (await supabase.auth.getUser()).data.user?.id);
+        .eq('user_id', user.id);
 
       if (membershipError) throw membershipError;
 
@@ -51,12 +56,11 @@ export default function Dashboard() {
         .from('projects')
         .select('*')
         .in('id', projectIds)
-        .eq('archived', false) // Only fetch non-archived projects
         .order('created_at', { ascending: false });
 
       if (projectsError) throw projectsError;
 
-      // Get member counts using separate queries for each project
+      // Get member counts
       const memberCounts = await Promise.all(
         projectIds.map(async (projectId) => {
           const { count } = await supabase
@@ -67,7 +71,7 @@ export default function Dashboard() {
         })
       );
 
-      // Get task counts using separate queries for each project
+      // Get task counts
       const taskCounts = await Promise.all(
         projectIds.map(async (projectId) => {
           const { count } = await supabase
@@ -87,6 +91,7 @@ export default function Dashboard() {
 
       setProjects(projectsWithCounts);
     } catch (err) {
+      console.error('Error fetching projects:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch projects');
     } finally {
       setLoading(false);
@@ -94,8 +99,10 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    fetchProjects();
-  }, []);
+    if (user?.id) {
+      fetchProjects();
+    }
+  }, [user?.id]);
 
   if (loading) {
     return (
@@ -160,7 +167,6 @@ export default function Dashboard() {
                 project={project}
                 onClick={() => setSelectedProject(project)}
                 onEdit={() => setProjectToEdit(project)}
-                onArchive={() => setProjectToArchive(project)}
               />
             ))}
             {projects.length === 0 && (
@@ -189,18 +195,6 @@ export default function Dashboard() {
           onProjectUpdated={() => {
             fetchProjects();
             setProjectToEdit(null);
-          }}
-        />
-      )}
-
-      {projectToArchive && (
-        <ArchiveProjectModal
-          projectId={projectToArchive.id}
-          projectName={projectToArchive.name}
-          onClose={() => setProjectToArchive(null)}
-          onArchived={() => {
-            fetchProjects();
-            setProjectToArchive(null);
           }}
         />
       )}

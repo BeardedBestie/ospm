@@ -27,30 +27,17 @@ export default function UserSelect({ value, onChange, projectId, className = '',
 
   const fetchUsers = async () => {
     try {
-      let query = supabase
-        .from('project_members')
-        .select(`
-          users!inner (
-            id,
-            email,
-            raw_user_meta_data
-          )
-        `);
+      // Directly fetch from users view
+      const { data, error: usersError } = await supabase
+        .from('users')
+        .select('id, email, raw_user_meta_data');
 
-      if (projectId) {
-        query = query.eq('project_id', projectId);
-      }
-
-      const { data, error: usersError } = await query;
       if (usersError) throw usersError;
 
-      // Filter out duplicates and null users
+      // Filter out duplicates
       const uniqueUsers = Array.from(
         new Map(
-          data
-            ?.map(member => member.users)
-            .filter((user): user is NonNullable<typeof user> => user !== null)
-            .map(user => [user.id, user])
+          (data || []).map(user => [user.id, user])
         ).values()
       );
 
@@ -72,7 +59,7 @@ export default function UserSelect({ value, onChange, projectId, className = '',
 
   useEffect(() => {
     fetchUsers();
-  }, [projectId]);
+  }, []);
 
   if (loading) {
     return (
